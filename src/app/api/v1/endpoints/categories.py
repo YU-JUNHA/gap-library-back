@@ -1,6 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps.auth import DbSession
+from app.api.deps.auth import DbSession, get_current_user
+from app.models.enums import UserRole
+from app.models.user import User
 from app.schemas.content import CategoryCreate, CategoryMove, CategoryUpdate
 from app.services.content_service import CategoryService
 
@@ -13,24 +15,29 @@ def get_tree(db: DbSession):
 
 
 @router.post("")
-def create_category(payload: CategoryCreate, db: DbSession):
+def create_category(payload: CategoryCreate, db: DbSession, current_user: User = Depends(get_current_user)):
+    _ = current_user
     row = CategoryService(db).create(payload.name, payload.parentId)
     return {"data": {"id": row.id, "name": row.name, "parentId": row.parent_id, "order": row.order, "createdAt": row.created_at, "updatedAt": row.updated_at}}
 
 
 @router.patch("/{category_id}")
-def update_category(category_id: str, payload: CategoryUpdate, db: DbSession):
+def update_category(category_id: str, payload: CategoryUpdate, db: DbSession, current_user: User = Depends(get_current_user)):
+    _ = current_user
     row = CategoryService(db).update(category_id, payload.name)
     return {"data": {"id": row.id, "name": row.name, "parentId": row.parent_id, "order": row.order, "createdAt": row.created_at, "updatedAt": row.updated_at}}
 
 
 @router.delete("/{category_id}")
-def delete_category(category_id: str, db: DbSession):
+def delete_category(category_id: str, db: DbSession, current_user: User = Depends(get_current_user)):
+    if current_user.role != UserRole.admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="권한이 없습니다.")
     CategoryService(db).delete(category_id)
     return {"data": {"deleted": True, "categoryId": category_id}}
 
 
 @router.post("/{category_id}/move")
-def move_category(category_id: str, payload: CategoryMove, db: DbSession):
+def move_category(category_id: str, payload: CategoryMove, db: DbSession, current_user: User = Depends(get_current_user)):
+    _ = current_user
     row = CategoryService(db).move(category_id, payload.newParentId, payload.newOrder)
     return {"data": {"id": row.id, "name": row.name, "parentId": row.parent_id, "order": row.order, "createdAt": row.created_at, "updatedAt": row.updated_at}}

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DocumentOwnerOut(BaseModel):
@@ -10,11 +10,12 @@ class DocumentOwnerOut(BaseModel):
     id: str
     name: str
     avatarUrl: str | None = None
+    organization: str | None = None
 
 
 class DocumentCreate(BaseModel):
     title: str
-    content: list[dict[str, Any]] = []
+    content: list[dict[str, Any]] = Field(default_factory=list)
     categoryId: str | None = None
     status: str = "draft"
 
@@ -39,10 +40,13 @@ class DocumentOut(BaseModel):
     ownerId: str
     ownerName: str
     ownerAvatarUrl: str | None = None
+    ownerOrganization: str | None = None
     owner: DocumentOwnerOut
     createdAt: datetime
     updatedAt: datetime
+    lastOpenedAt: datetime | None = None
     status: str
+    tags: list[str] = Field(default_factory=list)
 
 
 class DocumentListItemOut(BaseModel):
@@ -50,15 +54,20 @@ class DocumentListItemOut(BaseModel):
 
     id: str
     title: str
+    content: list[dict[str, Any]]
     summary: str | None = None
     contentText: str
     categoryId: str | None = None
     ownerId: str
     ownerName: str
     ownerAvatarUrl: str | None = None
+    ownerOrganization: str | None = None
+    owner: DocumentOwnerOut | None = None
     createdAt: datetime
     updatedAt: datetime
+    lastOpenedAt: datetime | None = None
     status: str
+    tags: list[str] = Field(default_factory=list)
 
 
 class DocumentListMeta(BaseModel):
@@ -68,3 +77,32 @@ class DocumentListMeta(BaseModel):
     totalPages: int
     hasNext: bool
     hasPrev: bool
+
+
+class DocumentSpellCheckIn(BaseModel):
+    title: str | None = None
+    content: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DocumentSpellCheckIssueOut(BaseModel):
+    type: str
+    original: str
+    suggestion: str
+    start: int
+    end: int
+
+
+class DocumentSpellCheckSectionOut(BaseModel):
+    originalText: str
+    correctedText: str
+    issues: list[DocumentSpellCheckIssueOut]
+
+
+class DocumentSpellCheckSummaryOut(BaseModel):
+    issueCount: int
+
+
+class DocumentSpellCheckOut(BaseModel):
+    title: DocumentSpellCheckSectionOut
+    body: DocumentSpellCheckSectionOut
+    summary: DocumentSpellCheckSummaryOut

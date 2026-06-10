@@ -1,17 +1,37 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from urllib.parse import urljoin
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.api.deps.auth import DbSession, get_current_user
 from app.models.document import Document
 from app.models.user import User
-from app.schemas.content import CommentCreate, ReactionCreate
-from app.schemas.document import DocumentCreate, DocumentListItemOut, DocumentListMeta, DocumentOut, DocumentUpdate
+from app.schemas.content import CommentCreate, ReactionCreate, ReactionSummaryOut, to_comment_out
+from app.schemas.document import (
+    DocumentCreate,
+    DocumentListItemOut,
+    DocumentListMeta,
+    DocumentOut,
+    DocumentSpellCheckIn,
+    DocumentSpellCheckOut,
+    DocumentUpdate,
+)
 from app.services.content_service import CollaborationService
+from app.services.document_spell_check_service import DocumentSpellCheckService
 from app.services.document_service import DocumentService
 
 router = APIRouter()
 
 
-def to_document_out(document: Document, *, content: list[dict] | None = None) -> DocumentOut:
+def _normalize_avatar_url(request: Request, avatar_url: str | None) -> str | None:
+    if not avatar_url:
+        return None
+    if avatar_url.startswith(("http://", "https://", "//")):
+        return avatar_url
+    return urljoin(str(request.base_url), avatar_url)
+
+
+def to_document_out(document: Document, owner: User, request: Request, *, content: list[dict] | None = None) -> DocumentOut:
+    avatar_url = _normalize_avatar_url(request, owner.avatar_url)
     return DocumentOut(
         **{
             "id": document.id,
@@ -21,41 +41,58 @@ def to_document_out(document: Document, *, content: list[dict] | None = None) ->
             "summary": document.summary,
             "categoryId": document.category_id,
             "ownerId": document.owner_id,
-            "ownerName": document.owner_name,
-            "ownerAvatarUrl": document.owner_avatar_url,
+            "ownerName": owner.name,
+            "ownerAvatarUrl": avatar_url,
+            "ownerOrganization": owner.organization,
             "owner": {
-                "id": document.owner_id,
-                "name": document.owner_name,
-                "avatarUrl": document.owner_avatar_url,
+                "id": owner.id,
+                "name": owner.name,
+                "avatarUrl": avatar_url,
+                "organization": owner.organization,
             },
             "createdAt": document.created_at,
             "updatedAt": document.updated_at,
+            "lastOpenedAt": document.last_opened_at,
             "status": document.status.value,
+            "tags": [],
         }
     )
 
 
-def to_document_list_item_out(document: Document) -> DocumentListItemOut:
+def to_document_list_item_out(document: Document, owner: User, request: Request) -> DocumentListItemOut:
+    avatar_url = _normalize_avatar_url(request, owner.avatar_url)
     return DocumentListItemOut(
         id=document.id,
         title=document.title,
+        content=document.content,
         summary=document.summary,
         contentText=document.content_text,
         categoryId=document.category_id,
         ownerId=document.owner_id,
-        ownerName=document.owner_name,
-        ownerAvatarUrl=document.owner_avatar_url,
+        ownerName=owner.name,
+        ownerAvatarUrl=avatar_url,
+        ownerOrganization=owner.organization,
+        owner={
+            "id": owner.id,
+            "name": owner.name,
+            "avatarUrl": avatar_url,
+            "organization": owner.organization,
+        },
         createdAt=document.created_at,
         updatedAt=document.updated_at,
+        lastOpenedAt=document.last_opened_at,
         status=document.status.value,
+        tags=[],
     )
 
 
 @router.get("")
 def list_documents(
+    request: Request,
     db: DbSession,
     q: str | None = None,
     category_id: str | None = Query(None, alias="categoryId"),
+    uncategorized: bool = Query(False),
     owner_id: str | None = Query(None, alias="ownerId"),
     status: str | None = None,
     sort: str = Query("createdAt"),
@@ -70,10 +107,13 @@ def list_documents(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="지원하지 않는 sort 값입니다.")
     if order not in valid_orders:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="지원하지 않는 order 값입니다.")
+    if uncategorized and category_id is not None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="uncategorized 와 categoryId 를 동시에 사용할 수 없습니다.")
 
     docs, total = service.list_documents(
         q=q,
         category_id=category_id,
+        uncategorized=uncategorized,
         owner_id=owner_id,
         status=status,
         sort=sort,
@@ -91,13 +131,13 @@ def list_documents(
         hasPrev=page > 1 and total_pages > 0,
     )
     return {
-        "data": [to_document_list_item_out(doc).model_dump() for doc in docs],
+        "data": [to_document_list_item_out(doc, owner, request).model_dump() for doc, owner in docs],
         "meta": meta.model_dump(),
     }
 
 
 @router.post("")
-def create_document(payload: DocumentCreate, db: DbSession, current_user: User = Depends(get_current_user)):
+def create_document(payload: DocumentCreate, request: Request, db: DbSession, current_user: User = Depends(get_current_user)):
     service = DocumentService(db)
     doc = service.create_document(
         title=payload.title,
@@ -106,25 +146,36 @@ def create_document(payload: DocumentCreate, db: DbSession, current_user: User =
         status=payload.status,
         owner=current_user,
     )
-    return {"data": to_document_out(doc, content=service.get_document_content(doc))}
+    return {"data": to_document_out(doc, current_user, request, content=service.get_document_content(doc))}
+
+
+@router.post("/spell-check")
+def spell_check_document(
+    payload: DocumentSpellCheckIn,
+    current_user: User = Depends(get_current_user),
+):
+    _ = current_user
+    result = DocumentSpellCheckService().check_document(payload.title, payload.content)
+    return {"data": DocumentSpellCheckOut(**result).model_dump()}
 
 
 @router.get("/{document_id}")
-def get_document(document_id: str, db: DbSession):
+def get_document(document_id: str, request: Request, db: DbSession):
     service = DocumentService(db)
-    doc = service.get_document(document_id)
-    return {"data": to_document_out(doc, content=service.get_document_content(doc))}
+    doc, owner = service.get_document_with_owner(document_id)
+    return {"data": to_document_out(doc, owner, request, content=service.get_document_content(doc))}
 
 
 @router.patch("/{document_id}")
 def patch_document(
     document_id: str,
     payload: DocumentUpdate,
+    request: Request,
     db: DbSession,
     current_user: User = Depends(get_current_user),
 ):
     service = DocumentService(db)
-    doc = service.get_document(document_id)
+    doc, owner = service.get_document_with_owner(document_id)
     service.ensure_document_owner_or_admin(doc, current_user)
     updated = service.update_document(
         doc,
@@ -136,7 +187,7 @@ def patch_document(
             "status": payload.status,
         },
     )
-    return {"data": to_document_out(updated, content=service.get_document_content(updated))}
+    return {"data": to_document_out(updated, owner, request, content=service.get_document_content(updated))}
 
 
 @router.delete("/{document_id}")
@@ -160,28 +211,28 @@ def open_document(document_id: str, db: DbSession):
 def add_reaction(document_id: str, payload: ReactionCreate, db: DbSession, current_user: User = Depends(get_current_user)):
     if payload.type != "like":
         return {"error": {"code": "VALIDATION_ERROR", "message": "지원하지 않는 reaction type 입니다.", "details": {}}}
-    CollaborationService(db).add_like(document_id, current_user)
-    return {"data": {"ok": True}}
+    summary = CollaborationService(db).add_like(document_id, current_user)
+    return {"data": ReactionSummaryOut(**summary).model_dump()}
 
 
 @router.delete("/{document_id}/reactions")
 def remove_reaction(document_id: str, db: DbSession, current_user: User = Depends(get_current_user)):
-    CollaborationService(db).remove_like(document_id, current_user)
-    return {"data": {"ok": True}}
+    summary = CollaborationService(db).remove_like(document_id, current_user)
+    return {"data": ReactionSummaryOut(**summary).model_dump()}
 
 
 @router.get("/{document_id}/reactions")
 def get_reactions(document_id: str, db: DbSession, current_user: User = Depends(get_current_user)):
-    return {"data": CollaborationService(db).reaction_summary(document_id, current_user)}
+    return {"data": ReactionSummaryOut(**CollaborationService(db).reaction_summary(document_id, current_user)).model_dump()}
 
 
 @router.get("/{document_id}/comments")
 def list_comments(document_id: str, db: DbSession):
     rows = CollaborationService(db).list_comments(document_id)
-    return {"data": [{"id": r.id, "documentId": r.document_id, "authorId": r.author_id, "content": r.content, "createdAt": r.created_at, "updatedAt": r.updated_at} for r in rows]}
+    return {"data": [to_comment_out(comment, author).model_dump() for comment, author in rows]}
 
 
 @router.post("/{document_id}/comments")
 def create_comment(document_id: str, payload: CommentCreate, db: DbSession, current_user: User = Depends(get_current_user)):
     r = CollaborationService(db).create_comment(document_id, payload.content, current_user)
-    return {"data": {"id": r.id, "documentId": r.document_id, "authorId": r.author_id, "content": r.content, "createdAt": r.created_at, "updatedAt": r.updated_at}}
+    return {"data": to_comment_out(r, current_user).model_dump()}

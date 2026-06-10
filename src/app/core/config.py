@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     file_storage_root: str = "storage/uploads"
     file_public_prefix: str = "/uploads"
     document_storage_root: str = "storage/documents"
+    draft_cleanup_enabled: bool = True
+    draft_cleanup_retention_days: int = 30
+    draft_cleanup_batch_size: int = 100
+    draft_cleanup_interval_hours: int = 24
+    draft_cleanup_run_on_startup: bool = True
 
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/gap_library"
 

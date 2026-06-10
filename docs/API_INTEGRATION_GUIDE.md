@@ -376,9 +376,17 @@ Bearer 필요
 ```json
 { "type": "like" }
 ```
+Response:
+```json
+{ "data": { "likeCount": 10, "likedByMe": true } }
+```
 
 ### DELETE `/api/v1/documents/{documentId}/reactions`
 Bearer 필요
+Response:
+```json
+{ "data": { "likeCount": 9, "likedByMe": false } }
+```
 
 ### GET `/api/v1/documents/{documentId}/reactions`
 Bearer 필요
@@ -396,6 +404,9 @@ Response:
       "id": "string",
       "documentId": "string",
       "authorId": "string",
+      "authorName": "유준하",
+      "authorAvatarUrl": "https://...",
+      "authorOrganization": "GAP",
       "content": "좋은 문서입니다.",
       "createdAt": "...",
       "updatedAt": "..."
@@ -408,6 +419,22 @@ Response:
 Bearer 필요
 ```json
 { "content": "좋은 문서입니다." }
+```
+Response:
+```json
+{
+  "data": {
+    "id": "string",
+    "documentId": "string",
+    "authorId": "string",
+    "authorName": "유준하",
+    "authorAvatarUrl": "https://...",
+    "authorOrganization": "GAP",
+    "content": "좋은 문서입니다.",
+    "createdAt": "...",
+    "updatedAt": "..."
+  }
+}
 ```
 
 ### PATCH `/api/v1/comments/{commentId}`
@@ -447,6 +474,8 @@ Response:
 
 ### GET `/api/v1/stats/mypage`
 Bearer 필요
+Query:
+`unit=week|month|year` 기본값은 `month`
 
 Response:
 ```json
@@ -457,9 +486,17 @@ Response:
       { "documentId": "doc-3", "title": "...", "updatedAt": "..." }
     ],
     "myUploadTrend": {
-      "unit": "month",
+      "unit": "week",
+      "periodStart": "2026-06-07",
+      "periodEnd": "2026-06-13",
       "points": [
-        { "label": "2026-01", "count": 3 }
+        { "label": "일", "count": 2 },
+        { "label": "월", "count": 0 },
+        { "label": "화", "count": 4 },
+        { "label": "수", "count": 1 },
+        { "label": "목", "count": 0 },
+        { "label": "금", "count": 3 },
+        { "label": "토", "count": 1 }
       ]
     }
   }

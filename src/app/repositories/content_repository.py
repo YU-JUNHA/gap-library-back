@@ -1,10 +1,13 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.document import Category, Comment, Document, DocumentReaction, Template
-from app.models.enums import ReactionType
+from app.models.enums import DocumentStatus, ReactionType
+from app.models.user import User
 
 
 class CategoryRepository:
@@ -77,7 +80,10 @@ class CollaborationRepository:
     def add_like(self, document_id: str, user_id: str) -> None:
         row = DocumentReaction(document_id=document_id, user_id=user_id, type=ReactionType.like.value, created_at=datetime.now(timezone.utc))
         self.db.add(row)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
 
     def remove_reaction(self, row: DocumentReaction) -> None:
         self.db.delete(row)
@@ -90,6 +96,15 @@ class CollaborationRepository:
     def list_comments(self, document_id: str) -> list[Comment]:
         stmt = select(Comment).where(Comment.document_id == document_id).order_by(Comment.created_at.asc())
         return self.db.execute(stmt).scalars().all()
+
+    def list_comments_with_author(self, document_id: str) -> list[tuple[Comment, User]]:
+        stmt = (
+            select(Comment, User)
+            .join(User, Comment.author_id == User.id)
+            .where(Comment.document_id == document_id)
+            .order_by(Comment.created_at.asc())
+        )
+        return self.db.execute(stmt).all()
 
     def get_comment(self, comment_id: str) -> Comment | None:
         return self.db.get(Comment, comment_id)
@@ -128,10 +143,37 @@ class StatsRepository:
     def recent_my_docs(self, user_id: str, limit: int = 5) -> list[Document]:
         return self.db.execute(select(Document).where(Document.owner_id == user_id).order_by(Document.updated_at.desc()).limit(limit)).scalars().all()
 
+    def recent_draft_docs(self, user_id: str, limit: int = 5):
+        stmt = (
+            select(Document, Category.name.label("category_name"))
+            .outerjoin(Category, Document.category_id == Category.id)
+            .where(Document.owner_id == user_id, Document.status == DocumentStatus.draft)
+            .order_by(Document.updated_at.desc(), Document.id.desc())
+            .limit(limit)
+        )
+        return self.db.execute(stmt).all()
+
     def upload_trend_rows(self):
         stmt = select(func.to_char(Document.created_at, 'IYYY-"W"IW').label('label'), Document.owner_id, func.count(Document.id).label('count')).group_by('label', Document.owner_id).order_by('label')
         return self.db.execute(stmt).all()
 
     def my_upload_trend_rows(self, user_id: str):
         stmt = select(func.to_char(Document.created_at, 'YYYY-MM').label('label'), func.count(Document.id).label('count')).where(Document.owner_id == user_id).group_by('label').order_by('label')
+        return self.db.execute(stmt).all()
+
+    def my_upload_daily_rows(self, user_id: str, start_date: date, end_date: date):
+        kst = ZoneInfo("Asia/Seoul")
+        start_dt = datetime.combine(start_date, time.min, tzinfo=kst).astimezone(timezone.utc)
+        end_dt = datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=kst).astimezone(timezone.utc)
+        local_day = func.date(func.timezone("Asia/Seoul", Document.created_at))
+        stmt = (
+            select(local_day.label("day"), func.count(Document.id).label("count"))
+            .where(
+                Document.owner_id == user_id,
+                Document.created_at >= start_dt,
+                Document.created_at < end_dt,
+            )
+            .group_by(local_day)
+            .order_by(local_day)
+        )
         return self.db.execute(stmt).all()

@@ -374,6 +374,9 @@ type CommentItem = {
   id: Id;
   documentId: Id;
   authorId: Id;
+  authorName: string;
+  authorAvatarUrl?: string | null;
+  authorOrganization?: string | null;
   content: string;
   createdAt: ISODateString;
   updatedAt: ISODateString;
@@ -444,4 +447,3 @@ type DocumentSortOption =
 4. 프로필 이미지는 `POST /users/me/avatar`로 업로드합니다.
 5. `page`, `pageSize`, `q`, `sort`, `order`, `categoryId`는 URL query 또는 상태 store에 유지합니다.
 6. API 실패 시 `ApiErrorResponse`를 공통 처리합니다.
-

@@ -1,4 +1,7 @@
+from calendar import monthrange
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.models.document import Document
@@ -8,6 +11,36 @@ from tests.conftest import auth_header, create_user, login
 
 
 import pytest
+
+
+KST = ZoneInfo("Asia/Seoul")
+
+
+def kst_datetime(year: int, month: int, day: int, hour: int = 9, minute: int = 0) -> datetime:
+    return datetime(year, month, day, hour, minute, tzinfo=KST)
+
+
+def set_document_timestamp(db_session, document_id: str, local_dt: datetime) -> None:
+    doc = db_session.get(Document, document_id)
+    assert doc is not None
+    utc_dt = local_dt.astimezone(timezone.utc)
+    doc.created_at = utc_dt
+    doc.updated_at = utc_dt
+    db_session.add(doc)
+    db_session.commit()
+    db_session.refresh(doc)
+
+
+async def create_document_at(client, headers, db_session, title: str, local_dt: datetime) -> dict:
+    created = await client.post(
+        "/api/v1/documents",
+        headers=headers,
+        json={"title": title, "content": [{"type": "paragraph", "content": [{"type": "text", "text": title}]}], "status": "draft"},
+    )
+    assert created.status_code == 200
+    document_id = created.json()["data"]["id"]
+    set_document_timestamp(db_session, document_id, local_dt)
+    return {"id": document_id, "title": title, "createdAt": local_dt}
 
 
 @pytest.mark.anyio
@@ -106,7 +139,10 @@ async def test_user_password_change_smoke(client, db_session):
 
 @pytest.mark.anyio
 async def test_document_comment_reaction_smoke(client, db_session):
-    create_user(db_session, email="member@gap.org", password="pass1234", role=UserRole.member, name="Member")
+    member = create_user(db_session, email="member@gap.org", password="pass1234", role=UserRole.member, name="Member")
+    member.avatar_url = "https://cdn.example.com/avatar.png"
+    db_session.add(member)
+    db_session.commit()
     token = (await login(client, "member@gap.org", "pass1234"))["accessToken"]
     headers = auth_header(token)
 
@@ -136,24 +172,150 @@ async def test_document_comment_reaction_smoke(client, db_session):
 
     like_add = await client.post(f"/api/v1/documents/{doc_id}/reactions", headers=headers, json={"type": "like"})
     assert like_add.status_code == 200
+    assert like_add.json()["data"] == {"likeCount": 1, "likedByMe": True}
+
+    like_add_again = await client.post(f"/api/v1/documents/{doc_id}/reactions", headers=headers, json={"type": "like"})
+    assert like_add_again.status_code == 200
+    assert like_add_again.json()["data"] == {"likeCount": 1, "likedByMe": True}
 
     like_get = await client.get(f"/api/v1/documents/{doc_id}/reactions", headers=headers)
     assert like_get.status_code == 200
-    assert like_get.json()["data"]["likedByMe"] is True
+    assert like_get.json()["data"] == {"likeCount": 1, "likedByMe": True}
 
     comment = await client.post(f"/api/v1/documents/{doc_id}/comments", headers=headers, json={"content": "nice"})
     assert comment.status_code == 200
+    assert comment.json()["data"]["authorName"] == "Member"
+    assert comment.json()["data"]["authorAvatarUrl"] == "https://cdn.example.com/avatar.png"
     comment_id = comment.json()["data"]["id"]
+
+    comment_list = await client.get(f"/api/v1/documents/{doc_id}/comments")
+    assert comment_list.status_code == 200
+    assert comment_list.json()["data"][0]["authorName"] == "Member"
+    assert comment_list.json()["data"][0]["authorAvatarUrl"] == "https://cdn.example.com/avatar.png"
 
     comment_patch = await client.patch(f"/api/v1/comments/{comment_id}", headers=headers, json={"content": "great"})
     assert comment_patch.status_code == 200
     assert comment_patch.json()["data"]["content"] == "great"
+    assert comment_patch.json()["data"]["authorName"] == "Member"
 
     comment_del = await client.delete(f"/api/v1/comments/{comment_id}", headers=headers)
     assert comment_del.status_code == 200
 
     like_del = await client.delete(f"/api/v1/documents/{doc_id}/reactions", headers=headers)
     assert like_del.status_code == 200
+    assert like_del.json()["data"] == {"likeCount": 0, "likedByMe": False}
+
+    like_del_again = await client.delete(f"/api/v1/documents/{doc_id}/reactions", headers=headers)
+    assert like_del_again.status_code == 200
+    assert like_del_again.json()["data"] == {"likeCount": 0, "likedByMe": False}
+
+
+@pytest.mark.anyio
+async def test_mypage_upload_trend_units_smoke(client, db_session):
+    _owner = create_user(db_session, email="owner@gap.org", password="pass1234", role=UserRole.member, name="Owner")
+    _other = create_user(db_session, email="other@gap.org", password="pass1234", role=UserRole.member, name="Other")
+
+    owner_token = (await login(client, "owner@gap.org", "pass1234"))["accessToken"]
+    other_token = (await login(client, "other@gap.org", "pass1234"))["accessToken"]
+    owner_headers = auth_header(owner_token)
+    other_headers = auth_header(other_token)
+
+    now_kst = datetime.now(KST)
+    today = now_kst.date()
+    week_start = today - timedelta(days=(today.weekday() + 1) % 7)
+    month_start = today.replace(day=1)
+    month_end_day = monthrange(today.year, today.month)[1]
+
+    owner_docs = []
+    for title, local_dt, headers in [
+        ("Week Sun", datetime.combine(week_start, time(9, 0), tzinfo=KST), owner_headers),
+        ("Week Tue", datetime.combine(week_start + timedelta(days=2), time(10, 0), tzinfo=KST), owner_headers),
+        ("Week Sat", datetime.combine(week_start + timedelta(days=6), time(11, 0), tzinfo=KST), owner_headers),
+        ("Month 1", kst_datetime(today.year, today.month, 1, 12), owner_headers),
+        ("Month 8", kst_datetime(today.year, today.month, 8, 12), owner_headers),
+        ("Month 15", kst_datetime(today.year, today.month, 15, 12), owner_headers),
+        ("Month 22", kst_datetime(today.year, today.month, 22, 12), owner_headers),
+        ("Month 29", kst_datetime(today.year, today.month, min(29, month_end_day), 12), owner_headers),
+        ("Year Jan", kst_datetime(today.year, 1, 5, 13), owner_headers),
+        ("Year Jun", kst_datetime(today.year, 6, 10, 13), owner_headers),
+        ("Year Dec", kst_datetime(today.year, 12, 20, 13), owner_headers),
+        ("Other User", kst_datetime(today.year, today.month, 1, 14), other_headers),
+    ]:
+        result = await create_document_at(client, headers, db_session, title, local_dt)
+        if headers is owner_headers:
+            owner_docs.append(result)
+
+    expected_by_unit = {}
+
+    def count_docs(predicate):
+        return sum(1 for doc in owner_docs if predicate(doc["createdAt"].date()))
+
+    expected_by_unit["week"] = {
+        "unit": "week",
+        "periodStart": week_start.isoformat(),
+        "periodEnd": (week_start + timedelta(days=6)).isoformat(),
+        "points": [
+            {"label": "일", "count": count_docs(lambda d: d == week_start)},
+            {"label": "월", "count": count_docs(lambda d: d == week_start + timedelta(days=1))},
+            {"label": "화", "count": count_docs(lambda d: d == week_start + timedelta(days=2))},
+            {"label": "수", "count": count_docs(lambda d: d == week_start + timedelta(days=3))},
+            {"label": "목", "count": count_docs(lambda d: d == week_start + timedelta(days=4))},
+            {"label": "금", "count": count_docs(lambda d: d == week_start + timedelta(days=5))},
+            {"label": "토", "count": count_docs(lambda d: d == week_start + timedelta(days=6))},
+        ],
+    }
+
+    month_points = []
+    for label, start_day, end_day in [
+        ("1주차", 1, 7),
+        ("2주차", 8, 14),
+        ("3주차", 15, 21),
+        ("4주차", 22, 28),
+        ("5주차", 29, month_end_day),
+    ]:
+        if start_day > month_end_day:
+            continue
+        count = sum(
+            1
+            for doc in owner_docs
+            if doc["createdAt"].date().year == today.year
+            and doc["createdAt"].date().month == today.month
+            and start_day <= doc["createdAt"].date().day <= min(end_day, month_end_day)
+        )
+        month_points.append({"label": label, "count": count})
+
+    expected_by_unit["month"] = {
+        "unit": "month",
+        "periodStart": month_start.isoformat(),
+        "periodEnd": today.replace(day=month_end_day).isoformat(),
+        "points": month_points,
+    }
+
+    year_points = []
+    for month in range(1, 13):
+        count = sum(1 for doc in owner_docs if doc["createdAt"].date().year == today.year and doc["createdAt"].date().month == month)
+        year_points.append({"label": f"{month}월", "count": count})
+
+    expected_by_unit["year"] = {
+        "unit": "year",
+        "periodStart": f"{today.year}-01-01",
+        "periodEnd": f"{today.year}-12-31",
+        "points": year_points,
+    }
+
+    total_expected = len(owner_docs)
+    latest_owner_doc = max(owner_docs, key=lambda item: item["createdAt"])
+
+    for unit, expected in expected_by_unit.items():
+        response = await client.get(f"/api/v1/stats/mypage?unit={unit}", headers=owner_headers)
+        assert response.status_code == 200
+        payload = response.json()["data"]
+        assert payload["uploadedFileCount"] == total_expected
+        assert payload["recentUploads"][0]["documentId"] == latest_owner_doc["id"]
+        assert payload["myUploadTrend"]["unit"] == expected["unit"]
+        assert payload["myUploadTrend"]["periodStart"] == expected["periodStart"]
+        assert payload["myUploadTrend"]["periodEnd"] == expected["periodEnd"]
+        assert payload["myUploadTrend"]["points"] == expected["points"]
 
 
 @pytest.mark.anyio

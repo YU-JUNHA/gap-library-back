@@ -1,4 +1,28 @@
-from pydantic import BaseModel
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict
+
+from app.models.document import Comment
+from app.models.user import User
+
+
+class CommentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    documentId: str
+    content: str
+    createdAt: datetime
+    updatedAt: datetime
+    authorId: str
+    authorName: str
+    authorAvatarUrl: str | None = None
+    authorOrganization: str | None = None
+
+
+class ReactionSummaryOut(BaseModel):
+    likeCount: int
+    likedByMe: bool
 
 
 class CategoryCreate(BaseModel):
@@ -40,3 +64,17 @@ class CommentCreate(BaseModel):
 
 class CommentUpdate(BaseModel):
     content: str
+
+
+def to_comment_out(comment: Comment, author: User) -> CommentOut:
+    return CommentOut(
+        id=comment.id,
+        documentId=comment.document_id,
+        content=comment.content,
+        createdAt=comment.created_at,
+        updatedAt=comment.updated_at,
+        authorId=author.id,
+        authorName=author.name,
+        authorAvatarUrl=author.avatar_url,
+        authorOrganization=author.organization,
+    )
