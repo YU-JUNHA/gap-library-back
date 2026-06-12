@@ -18,5 +18,34 @@ services:
       timeout: 5s
       retries: 5
 
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gap-library-back
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/gap_library
+      FILE_STORAGE_ROOT: /app/storage/uploads
+      DOCUMENT_STORAGE_ROOT: /app/storage/documents
+      API_PREFIX: /api/v1
+      APP_NAME: GAP Library API
+      DEBUG: "false"
+      FILE_PUBLIC_PREFIX: /uploads
+      BOOTSTRAP_INITIAL_DATA: "true"
+      CORS_ALLOW_ALL: "true"
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads_data:/app/storage/uploads
+      - documents_data:/app/storage/documents
+
 volumes:
   postgres_data:
+  uploads_data:
+  documents_data:

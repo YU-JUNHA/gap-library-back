@@ -47,7 +47,7 @@ docker compose down -v
 초기 스키마 반영:
 
 ```bash
-uv run alembic upgrade head
+uv run alembic upgrade heads
 ```
 
 현재 리비전 확인:
@@ -74,7 +74,7 @@ uv run alembic revision --autogenerate -m "describe change"
 3. 생성된 파일 검토 후 적용:
 
 ```bash
-uv run alembic upgrade head
+uv run alembic upgrade heads
 ```
 
 4. 롤백 필요 시:
@@ -145,3 +145,19 @@ uv run python -m app.jobs.purge_expired_drafts --retention-days 30 --batch-size 
 POST /api/v1/documents/spell-check
 Authorization: Bearer <token>
 ```
+
+## 10) Initial Bootstrap Data
+
+앱 시작 시 초기 관리자 계정을 자동 생성하려면 아래 환경변수를 켭니다.
+
+```bash
+BOOTSTRAP_INITIAL_DATA=true
+```
+
+기본 시드 계정:
+
+- name: `유준하`
+- email: `qetu5702@gmail.com`
+- password: `dbwnsgk7575*`
+- role: `admin`
+- organization: `GAP`

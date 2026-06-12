@@ -8,11 +8,20 @@ from fastapi.staticfiles import StaticFiles
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
+from app.db.session import SessionLocal
+from app.services.bootstrap_service import BootstrapService
 from app.services.draft_cleanup_scheduler import DraftCleanupScheduler
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    if settings.bootstrap_initial_data:
+        db = SessionLocal()
+        try:
+            BootstrapService(db).seed_initial_data()
+        finally:
+            db.close()
+
     scheduler = DraftCleanupScheduler()
     await scheduler.start()
     try:
@@ -23,12 +32,19 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
 
+cors_kwargs = {
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+if settings.cors_allow_all:
+    cors_kwargs["allow_origin_regex"] = ".*"
+else:
+    cors_kwargs["allow_origins"] = settings.cors_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    **cors_kwargs,
 )
 
 register_exception_handlers(app)

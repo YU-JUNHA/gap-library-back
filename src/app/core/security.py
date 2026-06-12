@@ -1,10 +1,16 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
+import bcrypt
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
+
+# Passlib 1.7.x still looks for bcrypt.__about__.__version__ on import.
+if not hasattr(bcrypt, "__about__"):
+    bcrypt.__about__ = SimpleNamespace(__version__=bcrypt.__version__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 

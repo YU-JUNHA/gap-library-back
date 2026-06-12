@@ -1,7 +1,7 @@
 """make document content_path nullable
 
 Revision ID: 8b9c0d1e2f33
-Revises: 6a7b8c9d0e11
+Revises: 6a7b8c9d0e11, 7b0d8c6e2f44
 Create Date: 2026-06-10 00:00:00.000000
 
 """
@@ -12,7 +12,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "8b9c0d1e2f33"
-down_revision: Union[str, Sequence[str], None] = "6a7b8c9d0e11"
+down_revision: Union[str, Sequence[str], None] = ("6a7b8c9d0e11", "7b0d8c6e2f44")
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
